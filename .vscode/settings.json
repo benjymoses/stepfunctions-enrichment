@@ -1,5 +1,0 @@
-{
-    "yaml.schemas": {
-        "https://raw.githubusercontent.com/awslabs/goformation/v5.2.11/schema/sam.schema.json": "file:///c%3A/Users/benmo/Documents/dev/sam-apps/stepfunctions-enrichment/template.yaml"
-    }
-}
