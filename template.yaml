@@ -3,80 +3,103 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   stepfunctions-enrichment
 
-  Sample SAM Template for stepfunctions-enrichment
+  A sample SAM application that illustrates a data enrichment use case for AWS Step Functions.
+
+Globals:
+  Function:
+    Runtime: python3.9
+    Handler: app.lambda_handler
+    Timeout: 10
+    Tags:
+      AssociatedApp: enrichment-orchestrator-demo
+    Architectures:
+      - arm64
 
 Resources:
-  StockTradingStateMachine:
-    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+
+  SfnEnrichmentLogGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      DefinitionUri: statemachine/stock_trader.asl.json
+      LogGroupName: /aws/vendedlogs/states/enrichment-orchestrator
+      RetentionInDays: 14
+
+  SfnEnrichment:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/enrichment-orchestrator.asl.json
       DefinitionSubstitutions:
-        StockCheckerFunctionArn: !GetAtt StockCheckerFunction.Arn
-        StockSellerFunctionArn: !GetAtt StockSellerFunction.Arn
-        StockBuyerFunctionArn: !GetAtt StockBuyerFunction.Arn
-        DDBPutItem: !Sub arn:${AWS::Partition}:states:::dynamodb:putItem
-        DDBTable: !Ref TransactionTable
+        GetFullOrderDetailsFunctionArn: !GetAtt GetFullOrderDetails.Arn
+        GetSystemXFunctionArn: !GetAtt GetSystemX.Arn
+        GetSystemYFunctionArn: !GetAtt GetSystemY.Arn
+        MakePDFFunctionArn: !GetAtt MakePDF.Arn
+      Tags:
+        AssociatedApp: enrichment-orchestrator-demo
+      Tracing:
+        Enabled: True
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt SfnEnrichmentLogGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL
       Events:
-        HourlyTradingSchedule:
-          Type: Schedule # More info about Schedule Event Source: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-statemachine-schedule.html
+        DemoEvent:
+          Type: EventBridgeRule
           Properties:
-            Description: Schedule to run the stock trading state machine every hour
-            Enabled: False # This schedule is disabled by default to avoid incurring charges.
-            Schedule: "rate(1 hour)"
+            Pattern:
+              source:
+                - demo.pos
+              detail:
+                action:
+                  - create-receipt
       Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
         - LambdaInvokePolicy:
-            FunctionName: !Ref StockCheckerFunction
+            FunctionName: !Ref GetFullOrderDetails
         - LambdaInvokePolicy:
-            FunctionName: !Ref StockSellerFunction
+            FunctionName: !Ref GetSystemX
         - LambdaInvokePolicy:
-            FunctionName: !Ref StockBuyerFunction
-        - DynamoDBWritePolicy:
-            TableName: !Ref TransactionTable
+            FunctionName: !Ref GetSystemY
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MakePDF
+        - Version: "2012-10-17"
+          Statement: 
+            - Effect: Allow
+              Action:
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                - "logs:CreateLogDelivery"
+                - "logs:GetLogDelivery"
+                - "logs:UpdateLogDelivery"
+                - "logs:DeleteLogDelivery"
+                - "logs:ListLogDeliveries"
+                - "logs:PutResourcePolicy"
+                - "logs:DescribeResourcePolicies"
+                - "logs:DescribeLogGroups"
+              Resource:
+                - "*"
 
-  StockCheckerFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html
-    Properties:
-      CodeUri: functions/stock_checker/
-      Handler: app.lambda_handler
-      Runtime: python3.9
-      Architectures:
-        - x86_64
-
-  StockSellerFunction:
+  GetFullOrderDetails:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: functions/stock_seller/
-      Handler: app.lambda_handler
-      Runtime: python3.9
-      Architectures:
-        - x86_64
+      CodeUri: functions/get_order_details/
 
-  StockBuyerFunction:
+  GetSystemX:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: functions/stock_buyer/
-      Handler: app.lambda_handler
-      Runtime: python3.9
-      Architectures:
-        - x86_64
+      CodeUri: functions/get_system_x/
 
-  TransactionTable:
-    Type: AWS::Serverless::SimpleTable # More info about SimpleTable Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-simpletable.html
+  GetSystemY:
+    Type: AWS::Serverless::Function
     Properties:
-      PrimaryKey:
-        Name: Id
-        Type: String
-      ProvisionedThroughput:
-        ReadCapacityUnits: 1
-        WriteCapacityUnits: 1
+      CodeUri: functions/get_system_y/
+
+  MakePDF:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/make_pdf/
+
 
 Outputs:
-  # StockTradingStateMachineHourlyTradingSchedule is an implicit Schedule event rule created out of Events key under Serverless::StateMachine
-  # Find out more about other implicit resources you can reference within SAM
-  # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-generated-resources.html
-  StockTradingStateMachineArn:
-    Description: "Stock Trading State machine ARN"
-    Value: !Ref StockTradingStateMachine
-  StockTradingStateMachineRoleArn:
-    Description: "IAM Role created for Stock Trading State machine based on the specified SAM Policy Templates"
-    Value: !GetAtt StockTradingStateMachineRole.Arn
+  StepFunctionsStateMachineArn:
+    Description: "State machine ARN"
+    Value: !Ref SfnEnrichment

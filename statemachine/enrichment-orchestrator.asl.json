@@ -1,0 +1,165 @@
+{
+    "Comment": "Demo state machine that builds order PDF based on multi-system input",
+    "StartAt": "Get full order details",
+    "States": {
+      "Get full order details": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "OutputPath": "$.Payload",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${GetFullOrderDetailsFunctionArn}:$LATEST"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Parallel"
+      },
+      "Parallel": {
+        "Type": "Parallel",
+        "Branches": [
+          {
+            "StartAt": "Get more info from system x",
+            "States": {
+              "Get more info from system x": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "OutputPath": "$.Payload.order",
+                "Parameters": {
+                  "Payload.$": "$",
+                  "FunctionName": "${GetSystemXFunctionArn}:$LATEST"
+                },
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 6,
+                    "BackoffRate": 2
+                  }
+                ],
+                "End": true
+              }
+            }
+          },
+          {
+            "StartAt": "Get more info from system y",
+            "States": {
+              "Get more info from system y": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "OutputPath": "$.Payload.order",
+                "Parameters": {
+                  "Payload.$": "$",
+                  "FunctionName": "${GetSystemYFunctionArn}:$LATEST"
+                },
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 6,
+                    "BackoffRate": 2
+                  }
+                ],
+                "End": true
+              }
+            }
+          }
+        ],
+        "Next": "Make PDF",
+        "ResultSelector": {
+          "rewardTier.$": "$.[0].rewardTier",
+          "loyaltyPoints.$": "$.[0].loyaltyPoints",
+          "contactPref.$": "$.[1].contactPref",
+          "email.$": "$.[1].email"
+        },
+        "ResultPath": "$.orderDetails",
+        "Catch": [
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "Next": "PutMetricData",
+            "Comment": "Catch all errors"
+          }
+        ]
+      },
+      "PutMetricData": {
+        "Type": "Task",
+        "Parameters": {
+          "MetricData": [
+            {
+              "MetricName": "EnrichmentDemoFailures"
+            }
+          ],
+          "Namespace": "MyData"
+        },
+        "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+        "Next": "Fail"
+      },
+      "Fail": {
+        "Type": "Fail"
+      },
+      "Make PDF": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${MakePDFFunctionArn}:$LATEST"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Keep PDF",
+        "ResultPath": "$.s3Data"
+      },
+      "Keep PDF": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.order.keepPdf",
+            "BooleanEquals": true,
+            "Next": "Success"
+          }
+        ],
+        "Default": "DeleteObject"
+      },
+      "DeleteObject": {
+        "Type": "Task",
+        "Parameters": {
+          "Bucket": "$.s3Data.Payload.s3PDF-uri",
+          "Key": "$.s3Data.Payload.s3PDF-uri"
+        },
+        "Resource": "arn:aws:states:::aws-sdk:s3:deleteObject",
+        "Next": "Success"
+      },
+      "Success": {
+        "Type": "Succeed"
+      }
+    }
+  }
